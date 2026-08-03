@@ -1,3 +1,5 @@
+# Github repo [LINK](https://github.com/farzeen-ali/AI-Engineer-360/tree/main) for The Techzeen Notes
+
 # 1. The Complete AI Engineer Roadmap for 2026 (14 Phases)
 
 ## 🎥 Video Link
