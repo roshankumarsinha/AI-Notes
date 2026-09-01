@@ -2,6 +2,218 @@
 
 ---
 
+# 20 AI Concepts Explained Simply
+
+**YouTube video:** https://www.youtube.com/watch?v=OYvlznJ4IZQ
+**Channel:** Gaurav Sen (GKCS)
+
+## 1. Large Language Model (LLM)
+
+**A neural network trained to predict the next token of an input sequence.** That's the whole thing. LLM has large numbers of parameters (weights) and is trained on large amounts of text.
+
+Example: feed in _"all that glitters"_ → it produces _"is not gold."_
+
+## 2. Tokenization
+
+The first thing done to an LLM's **input**: break the text into small units called **tokens**.
+
+Why not just split on spaces? Because meaning doesn't live in whitespace-delimited chunks. Suffixes carry structure worth capturing on their own: `-ers` (shimm**ers**, murmur**ers**, flick**ers**) signals "something is doing the action"; `-ing` (eat**ing**, danc**ing**) signals an ongoing action. Give the model those as their own tokens and it learns that structure once, for every word that uses them.
+
+**Real-world example:** like breaking a Lego model back into individual bricks before rebuilding — the bricks are the reusable pieces, not arbitrary chunks snapped off mid-brick.
+
+## 3. Vectors
+
+Tokens tell the model _what to focus on_; vectors are _how meaning is stored_.
+
+Each word is placed as a point in a big multi-dimensional space, arranged so **words with similar meaning sit close together** and opposites sit far apart. A word's position (its coordinates) _is_ its vector. Turning words into vectors is called **vectorization**.
+
+**Real-world example:** like a map where all the restaurants cluster in one area and all the hospitals in another — location itself tells you what kind of thing something is.
+
+## 4. Attention
+
+The breakthrough that made modern LLMs work.
+
+**The problem:** the same word means different things depending on context — "a tasty **apple**" (fruit), "**Apple's** revenue" (company), "the **apple** of my eye" (a loved one). The spelling is identical, so meaning has to come from _nearby words_.
+
+**The mechanism:** combine an ambiguous word's vector with the vectors of nearby context words. The word "revenue" pushes "apple" toward the _company_ region (near Google, Microsoft); the word "tasty" pushes it toward the _fruit_ region (near banana, guava). Crucially, it's **not simple addition** — it's a specific "attention" operation.
+
+**Real-world example:** hearing just "bat" is ambiguous, but "the **bat** flew into the cave" vs. "he swung the **bat**" — the surrounding words instantly settle which one you mean.
+
+## 5. Self-Supervised Learning
+
+How the model learns to predict the next token _without_ humans labelling anything.
+
+**The idea:** the input data already contains the answer inside itself. Blank out a piece and the rest of the data tells you what belonged there — a countdown "5, 4, 3, 2, \_\_\_" clearly ends in "1." That built-in structure is the training signal.
+
+**How it works on real text:** take a sentence that already exists on the internet (no human labelling), and turn it into several fill-in-the-blank challenges at once. From _"Et tu, Brute"_:
+
+| Given          | Predict   | Grading                                 |
+| -------------- | --------- | --------------------------------------- |
+| "Et"           | next word | "tu" ✓                                  |
+| "Et tu"        | next word | "Brute" ✓ / "Caesar" ✗ → update weights |
+| "Et tu, Brute" | next      | a stop/comma ✓ / more text ✗            |
+
+Wrong guess → penalise → update the network's weights. Right guess → leave it. Because it needs no human labels, it's **cheap and massively scalable** — the key reason this approach took over.
+
+**Real-world example:** like practising a song by muting one line and singing the missing part yourself — the song itself tells you if you got it right.
+
+## 6. Transformers
+
+People confuse "transformer" with "LLM," but they're different. An **LLM** is _the goal_ (predict the next token). A **transformer** is _one specific method_ for doing it.
+
+**The architecture:** tokens go through an **attention block** → a **feedforward neural network** → out come new vectors → into _another_ attention block → another network → and so on, layer after layer, until the model is confident enough to produce an answer.
+
+**What stacked layers add:** the first attention layer resolves basic ambiguity; deeper layers find subtler relationships. For "a **crane** was hunting a **crab**": layer 1 figures out it's the _bird_, not the machine; a deeper layer infers things never stated — the crab is afraid, the crane is hungry. Modern GPTs stack **hundreds** of these layers.
+
+**The catch:** attention costs **O(n²)** — double the input length, quadruple the work.
+
+**The transformer is swappable:** you could replace it with a different engine (state space models, diffusion-based text models) and still have an LLM.
+
+**Real-world example (his own):** the LLM is the _car_ (the product); the transformer is the _engine_. Same car can, in principle, take a different engine.
+
+## 7. Fine-Tuning
+
+An LLM predicts the next token — but _what kind_? A medical model and a finance model should answer the same question very differently.
+
+**Two stages:** (1) train a general **base model** with self-supervised learning; (2) run it through a curated set of **question–answer pairs** to specialise it — that second step is fine-tuning.
+
+**The key insight:** for "Who is the president of the USA?", a base model might reply _"I'd like to know that too"_ or _"No."_ Neither is factually _wrong_ — but both are **undesirable**. Fine-tuning penalises possible-but-unhelpful answers and teaches the model to answer _as expected_ (directly, or admit it doesn't know).
+
+**One base, many fine-tunes:** e.g. the **Llama** base model can be fine-tuned by different companies for their own customer queries.
+
+**Real-world example:** a med-school graduate (base model) doing a residency in cardiology (fine-tuning) — same foundation, now specialised.
+
+## 8. Few-Shot Prompting
+
+**Before** sending a query, add a few worked examples to it. Ask "Where is my parcel?" but attach examples of how you want it handled.
+
+Two things to note: it happens at **response time in production** (not training), and it **raises answer quality**. His deflating summary: it's just _examples in the prompt. That's it._
+
+**Real-world example:** showing someone two or three sample answers before asking them to write the fourth — they instantly match the format.
+
+## 9. Retrieval-Augmented Generation (RAG)
+
+Send the LLM three things together: (1) the **user's query**, (2) **examples** (few-shot, for format), and (3) **documents fetched in real time** (your policy docs, T&Cs — for company-specific context). With all three, quality jumps.
+
+The name decoded: **Retrieve** the context, **Augment** the query with it, **Generate** the answer. The whole aim is adding relevant context. How you store/fetch the docs (graph DB, vector DB, cache) matters less than you'd think; usually it's a vector DB because similarity search is easy.
+
+**Real-world example:** an open-book exam — instead of answering from memory, the model is handed the exact reference pages first.
+
+## 10. Vector Databases
+
+_Why_ similarity search is the right tool. Take the message: _"I'm upset with your payment system, I expect a refund."_ Your policy doc might never use the word "upset" — it might say "low rating" or "user drop-off" instead.
+
+**The trick:** vectors capture _meaning_, so "upset" sits close in space to "low rating" and "drop-off" even though the words differ. You fetch the _nearest_ documents by distance and hand them to the LLM. A vector database is just the tool that does these nearest-neighbour searches **efficiently** (via an algorithm family called **HNSW**). To you, it's a black box: store documents, retrieve them fast.
+
+**Real-world example:** searching your photos for "beach" and getting pictures of sand and ocean even if you never tagged them — it's matching _meaning_, not exact words.
+
+## 11. Model Context Protocol (MCP)
+
+A vector DB gives the model _your_ internal documents. But what if the context lives _outside_ your system? MCP is a **standard way to pull external context (and take actions) into a model.**
+
+His airline example:
+
+1. The LLM sits behind an **MCP client** that forwards the query.
+2. The LLM decides it needs external data.
+3. The client connects to external **MCP servers** — say IndiGo's and Air India's (each a wrapper around that airline's system).
+4. Flight details come back.
+5. The LLM decides: _"book IndiGo 1020."_
+6. That triggers a **booking API call** on IndiGo's server.
+7. The result flows back to the user.
+
+The point: the user no longer just _gets a recipe_ — the recipe gets **executed** for them.
+
+**Real-world example:** the difference between a travel website that _shows_ you flights and a travel agent who actually _books_ them on your behalf.
+
+## 12. Context Engineering
+
+The umbrella over few-shot prompting, RAG, and MCP — plus two newer challenges:
+
+- **User preferences** (remembering what a specific user likes).
+- **Summarizing history** so you don't blow the context limit: a **sliding window** (send the last ~100 messages verbatim, compress older ones into a short summary), keyword-only approaches, or last-message-plus-a-summary. The summarizing itself can be done by a **cheap small model**, saving the expensive model for the final answer.
+
+**Prompt vs. context engineering:** prompt engineering is **stateless** — one prompt, same instructions every time. Context engineering is **long-term** — it evolves with the user's preferences and chat history.
+
+**Real-world example:** prompt engineering is giving a one-off instruction to a stranger; context engineering is a long-term assistant who remembers your past requests and preferences.
+
+## 13. Agents
+
+A **long-running process** with many capabilities — it can query an LLM, hit external systems, and even call _other agents_ — all to meet a goal.
+
+His travel-agent example: it books flights, books hotels, even manages your email while you're away — and when it spots an opportunity (flights suddenly cheap), it **acts on its own** and books, per your preferences. The autonomy and opportunism are the point.
+
+**Real-world example:** a human personal assistant you can leave a goal with ("plan my trip") and trust to make judgment calls and take action while you're not watching.
+
+## 14. Reinforcement Learning from Human Feedback (RLHF)
+
+The most hyped term on the list. The model generates **two responses**; a human picks the better one (you've done this in ChatGPT). Winner gets **+1**, loser **−1**.
+
+**What that does geometrically:** each response is a _path_ of points through vector space. A +1 rewards every step along the good path; a −1 punishes every step along the bad one; where the two paths **overlap**, the scores cancel to neutral. Over many rounds you carve out **good regions to move toward and bad regions to avoid** — essentially **hill climbing** toward user-pleasing answers.
+
+**Analogy (his):** Pavlov's dog — reward the behaviour enough and it becomes automatic.
+
+**The important limitation — the fair coin:** flip heads five times; what's next? Pure reinforcement learning, having only _observed_ heads, learns to predict heads. But a human _told the coin is fair_ says **50/50 regardless**, because they have a **mental model of how a coin physically works.** RL can't build mental models — it only reinforces what it observed.
+
+## 15. Chain of Thought
+
+When training (or prompting) the model, **spell out the step-by-step reasoning** rather than jumping to the answer. Trained this way, it learns to reason through _new_ problems step by step too — and the answers are usually **much better** than one-shot replies.
+
+**Vs. few-shot:** chain of thought adds an explicit step-by-step breakdown, and the model can **add its own new steps** as a problem gets harder.
+
+**Real-world example:** "show your working" in a maths exam — breaking it into steps catches errors a straight-to-the-answer guess would miss.
+
+## 16. Reasoning Models
+
+Their signature (seen in **DeepSeek**): harder problem → **more** reasoning steps; easier problem → **fewer**. That adaptive step-count is the tell. Definition: a model that figures out **how to solve a problem step by step** on its own.
+
+Note: they don't _have_ to use chain of thought — alternatives include **tree of thought** and **graph of thought**, and they can **use tools** too. Also called **LRMs** (large reasoning models). Examples: DeepSeek, OpenAI's o1 and o3.
+
+**Real-world example:** a student who spends thirty seconds on "2+2" but an hour on a hard proof — effort scales with difficulty.
+
+## 17. Multimodal Models
+
+Models that handle more than text — images, audio, video (input _and_ output). They can count the apples in a photo, edit an image into a new one, or generate video.
+
+**Why they're often better than text-only models:** they build a **deeper understanding of what objects actually are.** Train on the words _cat_/_feline_ _and_ on cat images, and the result is stronger than words alone. **Commercial angle:** cheap AI-generated video (e.g. ads) could be huge — though he notes quality isn't there yet.
+
+**Real-world example:** a child who's only _read_ the word "dog" vs. one who's read it _and_ seen, heard, and petted dogs — the second understands "dog" far more richly.
+
+_The last three terms are about where AI is heading — companies increasingly want smaller, company-specific models, for (1) more control over outputs and (2) keeping their data in-house._
+
+## 18. Small Language Models (SLMs)
+
+Smaller networks — fewer connections and weights — trained on less data that's **company- or task-specific.** A model trained only on sales/customer queries becomes an _expert at sales_ but can't forecast the weather — and for most companies that trade-off is fine.
+
+> In practice an **SLM is roughly 1–8 billion** parameters (some definitions say a few million up to ~10 billion), and **LLMs run from tens of billions into the trillions** (GPT-4 is estimated over a trillion). The more useful real-world line: an SLM is small enough to **run on a single GPU or even a laptop/phone**, while an LLM needs a big multi-GPU cluster.
+
+**Real-world example:** a specialist local clinic (SLM) vs. a giant general research hospital (LLM) — the clinic handles its specialty cheaply and well, without the hospital's cost and scale.
+
+## 19. Distillation
+
+The usual way SLMs get built — a **teacher and student**:
+
+1. A big LLM (teacher) produces outputs.
+2. The same input goes to a small model (student), which tries to **mimic** the teacher.
+3. Match → leave the student's weights; mismatch → adjust them.
+
+Because the student has a hard weight limit, you're **condensing** the big model's knowledge into the best small representation you can — keeping most of the quality while **cutting cost**. At production time the distilled model is **much faster** to run and **easier to host.**
+
+**Real-world example:** an experienced chef (teacher) training an apprentice to reproduce the signature dishes — the apprentice can't do _everything_ the master can, but nails the ones that matter, faster and cheaper.
+
+## 20. Quantization
+
+Every weight is a number — say **32 bits**. Store it in **8 bits** instead and you'd expect to save ~75% of memory.
+
+Three caveats that matter:
+
+1. **The saving isn't the full 75%** — quantization is usually applied only to the feedforward weights, not the whole attention machinery.
+2. **Training cost is unchanged** — you fully train the model at full precision _first_, then quantize.
+3. **What it actually saves is inference** — the cost of _running_ the model in production.
+
+**Real-world example:** re-saving a huge photo as a slightly lower-quality JPEG — much smaller file, faster to open and share, and for most uses you can't tell the difference.
+
+---
+
 # How Gaurav Sen Built an AI Teacher Using Vector Databases and ChatGPT
 
 **YouTube video:** https://www.youtube.com/watch?v=Z3uWleYwOQA
