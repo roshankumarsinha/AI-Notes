@@ -461,3 +461,309 @@ flowchart TD
 | **Can do**     | Read only            | Read + write actions                      |
 | **Data**       | Static, owned by you | Live, fetched at request time             |
 | **Flow**       | Predefined path      | Self-directed loop, stops when it decides |
+
+---
+
+# AI Interview Question: 1M Context Window, or RAG? — Explained Simply
+
+**YouTube video:** https://www.youtube.com/watch?v=inYutMr6fN4
+**Channel:** Gaurav Sen (GKCS)
+
+The problem: a customer-support app with ~100,000 users keeps getting more and more documents added — how do you scale it?
+
+## The Problem
+
+A support bot already serves ~100,000 users. As the company grows and questions change, more and more documents pile into the support pipeline. How do you handle all these documents and keep scaling as the set grows?
+
+Answer: a **RAG (Retrieval-Augmented Generation)** pipeline, whose central move is **chunking** large documents into small pieces.
+
+## The Two Halves of RAG
+
+```mermaid
+flowchart TD
+    subgraph Offline["Offline: ingestion (done once, ahead of time)"]
+        D["Company documents"] --> CH["Chunk into small pieces"]
+        CH --> EM["Convert each chunk to an embedding"]
+        EM --> VDB["Store embeddings in a vector DB"]
+    end
+    subgraph Online["Online: at query time"]
+        Q["User query:\n'How many leaves do I have?'"] --> QE["Embed the query\n(same embedding model)"]
+        QE --> S["Search vector DB\nfor the closest chunks"]
+        S --> K["Take top-K chunks"]
+        K --> G["Send chunks + query to LLM"]
+        G --> A["LLM writes the answer"]
+    end
+    VDB -.-> S
+```
+
+## Step 1: Chunking
+
+The old problem was that the documents were too big to fit in the LLM's **context window**. The fix is to break each document (e.g. a PDF) into smaller pieces that _do_ fit. Typical chunk size: **800–1,000 characters**.
+
+## Step 2: Embeddings — and Why a Vector DB, Not Postgres
+
+Each chunk becomes an **embedding** — a numerical representation of its meaning. The interviewer pushes back: _we already use Postgres, and SQL has indexes too — why add a vector database?_
+
+Answer is **dimensionality**:
+
+- A SQL index compares along basically **one dimension**.
+- An embedding has **many** — one chunk might be a **768-dimension** vector, and some models go up to **8,192 dimensions**.
+
+A vector DB is purpose-built to compare these high-dimensional vectors and find the closest ones; a regular SQL index isn't.
+
+**Real-world example:** matching people by a single trait (say, height) is easy to sort and index. Matching them by _overall similarity_ across hundreds of traits at once is a completely different kind of search — that's what a vector DB does.
+
+## Step 3: The Query Path
+
+When an employee types _"How many leaves do I have?"_ and hits enter:
+
+1. The **query is embedded** — turned into a vector.
+2. Using the **same embedding model** that embedded the chunks (mismatched models would make the comparison meaningless).
+3. The query vector is used to **search the vector DB** for the chunks most likely to answer it, using an **approximate-nearest-neighbour (ANN)** algorithm like **HNSW**.
+
+## Step 4: Choosing K (how many chunks to retrieve)
+
+**K** is how many chunks you pull back — usually start around **5 or 10**, then tune empirically.
+
+## Step 5: Generation — and Why This Cuts Hallucination
+
+Previously, _all_ the documents were sent to the LLM. RAG's final step looks similar but differs in **what goes into the prompt**: only the retrieved chunks (the **context**) plus the user's query. The LLM's only job is to write the answer from that.
+
+**Why it reduces hallucination:** with the old setup, the documents were too big to fit, so the LLM lacked proper context and could **make things up or miss details**. Feeding it just the _relevant_ chunks means it answers from real supplied material instead of inventing it.
+
+_(She notes that forcing the LLM to answer_ only _from the supplied context is a separate problem, handled in **evals** — and leaves it there.)_
+
+## Follow-Up: Real PDFs Have Tables, Screenshots, and Scans
+
+The interviewer complicates it: the data is mostly **PDFs with tables** — currency-conversion rates, policy rules ("if more than 7 days have passed, do X, else Y"), and sometimes tables that are just **screenshots/images** pasted in (or fully **scanned** pages). Tables can even be **hierarchical** (several rows grouped under one parent row). How do you extract that?
+
+Her key insight: **only the ingestion pipeline needs to change — retrieval and generation stay exactly the same.**
+
+### The Fix: Layout Detection + a Parser Per Element Type
+
+Plain PDF parsers like **PyPDF** or **PyMuPDF** generally don't handle tables well, so:
+
+```mermaid
+flowchart TD
+    P["PDF page"] --> LD["Layout-detection step\nlabels each region"]
+    LD --> R1["Logo / title"]
+    LD --> R2["Table region"]
+    LD --> R3["Text region"]
+    R2 --> TP["Table parser"]
+    R3 --> TXT["Text parser"]
+    TP --> M["Merge into clean chunks → embed → store"]
+    TXT --> M
+```
+
+1. **Detect the layout** — an algorithm scans each page and labels what's where ("this region is a table," "this is text," "this is the logo").
+2. **Route each region to the right parser** — one parser for text, a different one for tables.
+3. **Why split them:** a single parser usually can't extract all these different element types well.
+
+**Real-world example:** like sorting mail before opening it — letters, parcels, and magazines each go to a different handling process, because one method can't deal with all three properly.
+
+---
+
+# AI Interview Question: Why Is This Chatbot Failing? — Explained Simply
+
+**YouTube video:** https://www.youtube.com/watch?v=dob12Lp2HZM
+**Channel:** Gaurav Sen (GKCS)
+
+The interviewer describes a RAG chatbot already in production whose answers aren't accurate enough. The candidate has to work out what's wrong on a whiteboard and fix it.\*
+
+## The Problem
+
+The team already has a RAG pipeline in production, but it isn't reaching the accuracy they want. The question: **what would you change in the architecture to fix it?**
+
+## Narrowing Down Where It Breaks
+
+When RAG accuracy is low there are a few usual suspects, so he checks them in order and rules each one in or out:
+
+| Suspect                                          | Interviewer's answer                       | Verdict                 |
+| ------------------------------------------------ | ------------------------------------------ | ----------------------- |
+| Are the most relevant chunks being retrieved?    | "Yes, that's exactly where the trouble is" | **The problem is here** |
+| Offline side (ingestion/indexing)                | Already checked, works fine                | Ruled out               |
+| Online side (what happens when a query comes in) | This is where it fails                     | **Focus here**          |
+| Query rewriting before retrieval                 | Not used, not needed for their case        | Ruled out               |
+| Weak embedding model                             | Possible but unlikely                      | Low suspicion           |
+
+**His working hypothesis:** the similarity search marks chunks as relevant to the query, but many of them aren't actually relevant.
+
+## The Culprit: Top-K Is Too Large (20–25 Chunks)
+
+He asks how many chunks they retrieve per query (the **top-k**). The answer is **20–25**.
+
+He calls that a lot, and explains why it hurts:
+
+- 20–25 chunks fill up the LLM's context window.
+- The LLM then has to dig through all of it to find what matters, a **"needle in a haystack"** problem.
+- Performance drops, and it can start to **hallucinate**.
+
+Why did they pick 20? They decided it empirically, because they create a lot of chunks. His guess at the real story is a common trap: **they weren't getting the relevant chunks, so they kept raising top-k to dig deeper, and that polluted the context.**
+
+## The Fix: Retrieve Wide, Then Rerank and Filter
+
+Simply cutting top-k back to 10 risks losing the relevant chunks again. So he takes both sides of the problem:
+
+```mermaid
+flowchart LR
+    Q["User query"] --> V["Vector search\nretrieve 20-25 chunks\n(cheap, wide net)"]
+    V --> R["Reranker\nre-score each chunk\nagainst the query\n(expensive, precise)"]
+    R --> F["Keep top ~10\ndrop the rest"]
+    F --> L["LLM writes the answer"]
+```
+
+1. **Keep retrieving 20–25** so the relevant chunks still get a chance to show up.
+2. **Add a reranking step**: re-check each retrieved chunk against the query and score it again.
+3. **Filter down to about 10** of the best chunks.
+4. Only those go to the LLM.
+
+**Real-world example:** hiring. A recruiter quickly shortlists 25 CVs by keyword match (cheap and wide). A senior engineer then reads each of the 25 carefully against the actual job (slow and precise) and picks the top 10 for interviews.
+
+## Why Embedding Similarity Gets It Wrong
+
+The vector database turns the query into a vector (call it **V1**) and finds the stored chunk vectors (V100, V101, V102…) closest to it. The weakness is that **some kinds of meaning are very hard to capture in an embedding:**
+
+| Example                                                                     | Why embeddings struggle                                     |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| "Laptop between Rs 300 and Rs 400"                                          | Numeric ranges are very hard to embed                       |
+| "This is **not** what I want" vs. "This is what I want"                     | Opposite meanings, but the vectors land very close together |
+| "This is an aircraft **carrier**" vs. "This is an aircraft **part**"        | Different things, potentially very close in embedding space |
+| "I **don't** want a 7-day refund period" vs. "I want a 7-day refund period" | Overall wording is near-identical, so the vectors are too   |
+
+A human knows the word **"not"** flips the whole meaning. An embedding squeezes the sentence into one vector, and that small word can get lost.
+
+## How a Reranker (Cross-Encoder) Works
+
+The reranker does **token-level matching** instead of comparing two separately made vectors. Internally it's a **cross-encoder**:
+
+```mermaid
+flowchart TD
+    Q["Query tokens"] --> CE["Cross-encoder\nreads query + chunk together"]
+    C["One chunk's tokens"] --> CE
+    CE --> S["Relevance score\nfor this (query, chunk) pair"]
+```
+
+1. The query is **not** turned into its own separate embedding.
+2. The query and one chunk are fed into the model **together**, so it can see how each word in the query relates to each word in the chunk (including words like "not").
+3. It outputs **one score** for that pair.
+4. Repeat for every retrieved chunk. For 20–25 chunks you get 20–25 scores, one each.
+5. Keep the highest-scoring ~10 and drop the rest.
+
+Expected result: better accuracy and usually fewer hallucinations.
+
+**Why "together" matters:** a normal embedding model (a **bi-encoder**) summarises the query and the chunk separately and then compares the two summaries. A cross-encoder reads them side by side, like comparing two documents line by line instead of comparing their one-line abstracts.
+
+## "Why Not Just Use the Reranker for Everything?"
+
+The interviewer's sharpest challenge: if the reranker is that good, why use the vector DB at all?
+
+The answer is **scale**. It's a deliberate two-step design:
+
+- **Step 1 (cheap):** embed the query and find nearest neighbours. This works even across millions of chunks, because the chunk vectors were computed ahead of time.
+- **Step 2 (expensive):** the cross-encoder runs a full model pass for every (query, chunk) pair. Doing that for every chunk in the corpus, on every query, would be far too slow and costly.
+
+So the cheap step narrows the field, and the expensive step only runs on the small shortlist.
+
+## The Trade-off: When Is a Reranker Worth It?
+
+Reranking adds an extra stage to every request, so it costs latency and money. His framing:
+
+- If the reranker costs something like **50–100 ms** and you're willing to pay that for the accuracy gain, it's a good idea.
+- Expect roughly a **5–10% accuracy improvement** (an illustrative figure, not a guarantee).
+- **Prove it with metrics.** He names **faithfulness** and **answer relevancy** (the same eval metrics from the Evals episode). If those go up, the extra latency and cost are justified.
+
+## Worth Knowing (added context)
+
+There's one more retrieval trick that can be used in conjunction with a reranker:
+
+- **Hybrid search**: combine vector search with keyword search (BM25). Keyword search catches exact terms, product codes and specific words that embeddings blur, and the two result lists get merged. This is often used _together with_ a reranker.
+
+---
+
+# AI Interview Question: Why Is the Chatbot So Slow? — Explained Simply
+
+**YouTube video:** https://www.youtube.com/watch?v=Tb5iXgqflHI
+**Channel:** Gaurav Sen (GKCS)
+
+Customers complain the company chatbot is too slow and wants it to "respond in milliseconds."
+
+## The Ask, and the First Pushback
+
+The manager wants responses in **milliseconds**. The candidate's first move is to set expectations honestly: that's hard to promise. If the bot calls an **external LLM API**, part of the total time depends on a system the team doesn't control. He commits to making it as fast as possible instead.
+
+## Diagnosing Where the Time Goes
+
+Instead of guessing, he narrows it down step by step:
+
+```mermaid
+flowchart TD
+    A["Chatbot is slow"] --> B{"RAG or agent?"}
+    B -->|"RAG, answers from company docs"| C{"Do users upload documents?"}
+    C -->|"No, chat only"| D["Ingestion is NOT the cause\nFocus on inference (answering)"]
+    D --> E{"Retrieval or LLM generation?"}
+    E -->|"LLM is fast"| F["Retrieval is the suspect"]
+    F --> G{"Extra steps?"}
+    G --> H["No query rewriting\nOne reranker"]
+    F --> I["Prime suspect:\nvector DB search"]
+```
+
+| Question                         | Answer                              | What it rules out                      |
+| -------------------------------- | ----------------------------------- | -------------------------------------- |
+| RAG-based or an agent?           | RAG, answers from company documents | Agent loops, tool calls                |
+| Do users upload their own files? | No, they just chat                  | Ingestion (parsing/chunking/embedding) |
+| Is the LLM slow to generate?     | No, it's fast                       | Generation                             |
+| Query rewriting? Reranking?      | No rewriting, one reranker          | Rewriting                              |
+
+**What's left:** retrieval, i.e. fetching chunks from the vector database.
+
+## The Likely Culprit: Vector Database Search
+
+The query is turned into an **embedding**, and that has to be matched against stored chunk vectors to find the nearest ones. This is **approximate nearest-neighbour (ANN)** search, using algorithms like **HNSW** or **IVF**. If they aren't tuned well, the search is slow.
+
+**How big is it?** More than **1 million documents**, each split into about **5–10 chunks**, so roughly **10 million vectors** searched on every query.
+
+## His Fixes for Slow Retrieval
+
+1. **Tune the ANN algorithm** (HNSW/IVF settings).
+2. **Run the search in parallel.**
+3. **Handle user queries in parallel** (probably already done).
+4. **Cache with Redis**: keep recent or commonly-hit documents in a fast in-memory cache. Redis supports vector search, so common queries can be answered without hitting the big database.
+5. **Shard the vector DB**: split it into several smaller databases by document type/topic and **route each query to the right shard**, so you search a slice instead of everything.
+
+## Corrections and Added Context
+
+**1. The reranker was left off the suspect list.** They said they have **one reranker**, and from Episode #7 a cross-encoder reranker typically adds roughly **50–100 ms** per request. That's a real, measurable cost and should be checked alongside the vector search, not skipped.
+
+**2. 10 million vectors isn't huge for a well-set-up vector DB.** The video implies that even an optimised search will be slow at this scale. Not necessarily: HNSW search time grows very slowly with the number of vectors, and a well-tuned index on 10 million vectors can usually answer in **a few to tens of milliseconds** when it fits in memory. If it's slow, the usual reasons are:
+
+- the index **doesn't fit in RAM**, so it's reading from disk;
+- search settings are set for very high accuracy (e.g. a large `ef_search` in HNSW), which trades speed for recall;
+- there's **no proper ANN index**, so it's doing a brute-force scan.
+
+**3. Redis caching overlaps with semantic caching.** Caching common queries is exactly the idea from Episode #3 (Prompt Caching). Caching the **final answer** for repeat or similar questions skips retrieval _and_ the LLM, which is a bigger saving than caching documents alone.
+
+**4. Streaming helps the manager's real complaint.** Streaming the LLM's answer word by word doesn't make the total time shorter, but users see text in well under a second, so the bot **feels** much faster. Since the complaint is about customers' experience, this is often the cheapest win.
+
+## Hypothetical: What If Document Upload Were Slow?
+
+The interviewer switches scenarios. The ingestion pipeline, in order (he corrects himself that parsing comes first):
+
+```mermaid
+flowchart LR
+    P["Parse the document"] --> C["Chunk it"]
+    C --> E["Embed each chunk"]
+    E --> S["Store in vector DB"]
+```
+
+Where it can be slow:
+
+- **Parsing** is often slow, and can also be inaccurate when you don't know the document format in advance.
+- **Chunking**, especially with a **semantic chunker**, which they do use.
+
+### Why Semantic Chunking Is Slow
+
+A normal chunker just cuts text every N characters. A **semantic chunker** tries to cut where the topic changes. To do that, it **embeds sentences and compares the similarity of neighbouring pieces**, repeatedly, to decide where the boundaries go. That means many extra embedding calls and comparisons per document, which adds up fast across millions of documents. He calls it "great in theory, doesn't really work in practice at scale."
+
+**Real-world example:** cutting a long roll of paper into equal pieces with a ruler is quick. Reading it and cutting only at the end of each topic is better quality, but much slower.
+
+---
