@@ -767,3 +767,109 @@ A normal chunker just cuts text every N characters. A **semantic chunker** tries
 **Real-world example:** cutting a long roll of paper into equal pieces with a ruler is quick. Reading it and cutting only at the end of each topic is better quality, but much slower.
 
 ---
+
+# AI Interview Question: Why Is the Agent So Slow? — Explained Simply
+
+**YouTube video:** https://www.youtube.com/watch?v=Lck0xGxMBRk
+**Channel:** Gaurav Sen (GKCS)
+
+\*Episode 9 of the mock-interview series, and a follow-on to Episode #8 (the slow chatbot). This time it's an **agent**, not a RAG chatbot. A company uses an AI agent to help with employee performance reviews, but every query takes so long that people struggle to use it.
+
+## The Problem
+
+The company's performance-review AI is too slow: every new query takes a very long time.
+
+It's an **agentic application**. You can't chat with it back and forth, but you give it prompts and it goes off and does work using tools.
+
+## Pinning Down the Architecture First
+
+Before guessing, he builds a picture of the system:
+
+| Question                       | Answer                                                               |
+| ------------------------------ | -------------------------------------------------------------------- |
+| What data does it need?        | Employee data, Git commits, probably some documentation              |
+| How many tools?                | About **five** (call them T1–T5), with an LLM deciding which to call |
+| LLM via API or self-hosted?    | **API calls**                                                        |
+| Memory layer, or single agent? | **Single agent**, no separate memory, no stored preferences          |
+
+So everything the agent knows comes from what's put into its context for that run (pure "context engineering").
+
+## Problem 1: Tools Run One After Another (Synchronously)
+
+1st Problem can be every tool call runs **synchronously**: the agent calls T1, waits for the answer, then calls T2, waits, and so on. With five tools, all those waits stack up.
+
+```mermaid
+flowchart LR
+    subgraph Sync["Synchronous: waits stack up"]
+        direction LR
+        A1["T1"] --> A2["T2"] --> A3["T3"] --> A4["T4"] --> A5["T5"]
+    end
+```
+
+```mermaid
+flowchart LR
+    S["Start"] --> B1["T1"]
+    S --> B2["T2"]
+    S --> B3["T3"]
+    S --> B4["T4"]
+    S --> B5["T5"]
+    B1 --> E["All done\n(total ≈ slowest tool)"]
+    B2 --> E
+    B3 --> E
+    B4 --> E
+    B5 --> E
+```
+
+**The fix:** run **independent** tools at the same time (asynchronously). Then the total wait is roughly the time of the _slowest_ tool, not the sum of all five.
+
+## Problem 2: The MCP Server Exposes Too Many Tools
+
+Their tools come from **MCP servers** (GitHub, plus employee data exposed over MCP). One company-wide MCP server might offer **10 tools** when this agent only needs **5**.
+
+His fix: **filter the tool list** and only give the agent the tools it actually needs. Two benefits from one change:
+
+1. **Less context bloat:** every tool's description goes into the prompt, so fewer tools means a shorter prompt.
+2. **Lower latency:** a shorter prompt is quicker to process, and the model has fewer options to choose between.
+
+## When One Tool Is Especially Slow: Cache the Stable Data
+
+Say **T3** (fetching employee data) is the slow one. Much of that data **barely changes day to day**, like an employee's number of leaves. So:
+
+- **Pre-compute and store** those values in the backend ahead of time.
+- **Put them straight into the agent's context** (e.g. in the system prompt) at the start of the run.
+- The agent no longer needs to call T3 at all for that information.
+
+## Do You Even Need All Five Tools?
+
+Some tools may only fetch routine information that could just be placed in context up front. If so, drop the tool and skip the call-wait-respond cycle entirely.
+
+## Composing (Merging) Tools That Overlap
+
+The interviewer asks: if T2 always waits on T1, can you **merge them into one tool**? Tanishq's rule:
+
+| Situation                                                                           | Fix                                           |
+| ----------------------------------------------------------------------------------- | --------------------------------------------- |
+| Two tools' jobs **overlap heavily** (e.g. both fetch closely related employee data) | **Merge** them into one tool                  |
+| Tools are **independent** of each other                                             | Don't merge; run them **in parallel (async)** |
+| Tools are **dependent** and also overlap a lot                                      | **Merge** them too                            |
+
+**Real-world example:** if you always pick up bread and then milk from two shops next door to each other, it's faster to find one shop that sells both.
+
+## Corrections and Added Context
+
+**1. The biggest hidden cost is the LLM round trips, not just the tools.** In an agent loop, every tool call means: the LLM decides → the tool runs → the result goes back → the LLM decides again. Since they call the LLM **over an API**, each of those decisions is a full network call plus generation time. Five tools called one at a time means at least **five or six LLM calls** per query. That's usually more time than the tools themselves.
+
+```mermaid
+flowchart LR
+    L1["LLM call"] --> T1["T1"] --> L2["LLM call"] --> T2["T2"] --> L3["LLM call"] --> D["...and so on"]
+```
+
+So the strongest fixes are the ones that **cut LLM turns**: letting the model request several tools in **one turn** (parallel tool calling, which most model APIs support), merging dependent tools so one call replaces two, and putting stable data into context so some calls never happen. This is also the real reason composing tools helps.
+
+**2. Batching doesn't require multi-agent.** A single agent can batch too, and performance reviews are a perfect fit. If the agent needs data for 20 employees, a tool designed as `get_employee_data(ids=[...])` fetches all 20 in **one** call instead of 20 separate calls (and 20 LLM turns). Your backend can also batch requests from many users of the same single-agent app.
+
+**3. Caching stable data pairs nicely with prompt caching.** If shared, unchanging content (instructions, tool descriptions, company policies) sits at the **start** of the prompt, the LLM provider can reuse its internal work for that prefix on every request (the "prefix caching" from Episode #3), making each call cheaper and faster. Put per-employee data _after_ the shared part, or it breaks the shared prefix. And as in Episode #3, cached employee data needs an expiry (TTL) so it doesn't go stale.
+
+**4. Measure first** (from Episode #8): trace each LLM call and each tool call to see where the seconds really go before changing anything.
+
+---
